@@ -13,17 +13,30 @@ Control Claude Code CLI sessions from your mobile device using Mattermost.
 ## Architecture
 
 ```
-Terminal (Claude Code)  ←→  Bot Daemon  ←→  Mattermost Server
-                              ↓
-                          SQLite DB
-                        (session registry)
+┌─────────────────────────────────┐         ┌──────────────────────┐
+│   Your Mac / Dev Machine       │         │   Your VPS Server    │
+│                                 │         │                      │
+│  Claude Code CLI                │         │                      │
+│       ↕                         │         │                      │
+│  Integration Hooks              │         │                      │
+│       ↕                         │   HTTPS │                      │
+│  Bot Daemon ←───────────────────┼─────────→  Mattermost Server  │
+│       ↓                         │         │                      │
+│  SQLite DB                      │         │                      │
+│  (sessions.db)                  │         │                      │
+└─────────────────────────────────┘         └──────────────────────┘
 ```
+
+**Deployment:**
+- **Local Machine (Mac):** Claude Code CLI + Integration daemon + Hooks
+- **VPS Server:** Mattermost server only
+- **Communication:** Daemon makes HTTPS API calls to Mattermost server
 
 **Components:**
 - **Claude Code Hooks**: Intercept tool executions and send to Mattermost
 - **Bot Daemon**: Listens for Mattermost messages, manages sessions
-- **Session Registry**: Maps Claude sessions to Mattermost threads
-- **Mattermost Bot**: Posts updates and receives user input
+- **Session Registry**: SQLite database mapping Claude sessions to Mattermost threads
+- **Mattermost Bot**: Posts updates and receives user input via API
 
 ## Requirements
 
@@ -39,45 +52,69 @@ Terminal (Claude Code)  ←→  Bot Daemon  ←→  Mattermost Server
 1. Log into Mattermost as admin
 2. Go to **System Console** → **Integrations** → **Bot Accounts**
 3. Click **Add Bot Account**
-   - Username: `claude-bot`
-   - Display Name: `Claude Code`
-   - Description: `Claude Code CLI integration`
-   - Role: `Member`
+   - **Username:** `claude-bot`
+   - **Display Name:** `Claude Code`
+   - **Description:** `Claude Code CLI integration`
+   - **Role:** `Member`
+   - **Additional Permissions:** Enable `post:channels` only
 4. Click **Create Bot Account**
-5. Copy the **Access Token** (you'll need this)
+5. Copy the **Access Token** (save this securely)
 
-### 2. Install Claude-Mattermost
+**Security Note:** We use `post:channels` (not `post:all`) for least privilege. The bot will only access channels where it's explicitly invited.
+
+### 2. Create and Invite Bot to Channel
+
+1. Create a channel for Claude sessions (e.g., `claude-sessions`)
+2. In that channel, invite the bot:
+   ```
+   /invite @claude-bot
+   ```
+3. Verify bot appears in the channel member list
+
+### 3. Install Claude-Mattermost
+
+**IMPORTANT:** Install on the machine where Claude Code CLI is installed (your local development machine), NOT on your Mattermost server.
 
 ```bash
-# Clone repository
-git clone https://github.com/DrSatsuma/claude-mattermost.git
+# On your local machine (Mac, Linux, etc.)
+git clone https://github.com/DrSatsuma1/claude-mattermost.git
 cd claude-mattermost
-
-# Install dependencies
-pip install -r requirements.txt
 
 # Configure environment
 cp .env.template .env
 # Edit .env with your settings:
-# - MATTERMOST_URL
-# - MATTERMOST_BOT_TOKEN
-# - MATTERMOST_TEAM_NAME
-# - MATTERMOST_CHANNEL_NAME
+# - MATTERMOST_URL (your Mattermost server URL)
+# - MATTERMOST_BOT_TOKEN (from step 1)
+# - MATTERMOST_TEAM_NAME (your team name)
+# - MATTERMOST_CHANNEL_NAME (channel from step 2)
 
-# Install hooks and start daemon
+# Install dependencies, hooks, and start daemon
 ./install.sh
 ```
 
-### 3. Initialize in a Project
+The installer will:
+- Install Python dependencies
+- Copy hooks to `~/.claude/hooks/` (backing up existing ones)
+- Start the daemon in the background
+- Add CLI tool to your PATH
+
+### 4. Verify Installation
 
 ```bash
-cd ~/your-project
-claude-mattermost init
+# Test connection to Mattermost
+claude-mattermost test
+
+# Check daemon status
+claude-mattermost status
 ```
 
-This creates a Mattermost thread for this project and links your Claude session.
+You should see:
+```
+✓ Connected to Mattermost successfully
+✓ Daemon running (PID: xxxxx)
+```
 
-### 4. Start Using
+### 5. Start Using
 
 **In Terminal:**
 ```bash
@@ -244,10 +281,12 @@ sessions (
 
 ## Security Considerations
 
-- Bot token grants full API access - keep `.env` secure
-- Tool execution approval prevents unauthorized commands
-- Sessions timeout after inactivity (default: 24 hours)
-- All communication over HTTPS (configure your Mattermost server)
+- **Bot Permissions:** Uses `post:channels` only - bot can only access invited channels
+- **Token Security:** Bot token stored in `~/.claude/claude-mattermost/.env` - keep this file secure
+- **Tool Approval:** All tool executions require explicit approval via Mattermost
+- **Session Timeout:** Sessions automatically timeout after inactivity (default: 24 hours)
+- **HTTPS Required:** Ensure your Mattermost server uses HTTPS for encrypted communication
+- **Local Daemon:** Daemon runs on your local machine - no data sent to third parties
 
 ## Development
 
