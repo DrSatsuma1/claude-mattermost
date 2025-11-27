@@ -1,0 +1,1 @@
+# Claude-Mattermost core package

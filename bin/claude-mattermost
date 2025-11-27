@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""CLI tool for managing Claude-Mattermost integration."""
+
+import os
+import sys
+import argparse
+import subprocess
+from pathlib import Path
+
+
+INSTALL_DIR = Path.home() / ".claude" / "claude-mattermost"
+HOOKS_DIR = Path.home() / ".claude" / "hooks"
+
+
+def init_project():
+    """Initialize Mattermost integration for current project."""
+    project_path = Path.cwd()
+    print(f"Initializing Claude-Mattermost for: {project_path}")
+
+    # Generate session ID from project path
+    import hashlib
+    session_id = hashlib.md5(str(project_path).encode()).hexdigest()[:12]
+
+    # TODO: Create thread via daemon API
+    print(f"Session ID: {session_id}")
+    print("Thread created in Mattermost")
+
+
+def list_sessions():
+    """List active sessions."""
+    import sqlite3
+
+    db_path = INSTALL_DIR / "sessions.db"
+    if not db_path.exists():
+        print("No sessions found")
+        return
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM sessions WHERE status = 'active' ORDER BY last_active DESC")
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        print("No active sessions")
+        return
+
+    print(f"{'Session ID':<15} {'Project':<40} {'Status':<10} {'Last Active'}")
+    print("-" * 100)
+
+    for row in rows:
+        print(f"{row['id']:<15} {row['project_path']:<40} {row['status']:<10} {row['last_active']}")
+
+
+def end_session(session_id: str):
+    """End a session."""
+    import sqlite3
+
+    db_path = INSTALL_DIR / "sessions.db"
+    if not db_path.exists():
+        print("No sessions found")
+        return
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("UPDATE sessions SET status = 'ended' WHERE id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+    print(f"Session {session_id} ended")
+
+
+def test_connection():
+    """Test connection to Mattermost."""
+    print("Testing connection to Mattermost...")
+
+    # Load environment
+    from dotenv import load_dotenv
+    load_dotenv(INSTALL_DIR / ".env")
+
+    url = os.getenv('MATTERMOST_URL')
+    token = os.getenv('MATTERMOST_BOT_TOKEN')
+
+    if not url or not token:
+        print("Error: Missing MATTERMOST_URL or MATTERMOST_BOT_TOKEN in .env")
+        return
+
+    # Test connection
+    from core.mattermost_client import MattermostClient
+
+    client = MattermostClient(url, token)
+    if client.login():
+        print("✓ Connected to Mattermost successfully")
+    else:
+        print("✗ Failed to connect to Mattermost")
+
+
+def show_logs():
+    """Show daemon logs."""
+    log_file = INSTALL_DIR / "logs" / "daemon.log"
+
+    if not log_file.exists():
+        print("No logs found")
+        return
+
+    subprocess.run(["tail", "-f", str(log_file)])
+
+
+def cleanup_old():
+    """Clean up old sessions."""
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    db_path = INSTALL_DIR / "sessions.db"
+    if not db_path.exists():
+        print("No sessions to clean up")
+        return
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Clean up sessions older than 7 days
+    cutoff = datetime.now() - timedelta(days=7)
+
+    cursor.execute(
+        "DELETE FROM sessions WHERE status != 'active' AND last_active < ?",
+        (cutoff,)
+    )
+
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+
+    print(f"Cleaned up {count} old sessions")
+
+
+def daemon_status():
+    """Check daemon status."""
+    # Check if daemon process is running
+    result = subprocess.run(
+        ["pgrep", "-f", "claude-mattermost.*daemon"],
+        capture_output=True
+    )
+
+    if result.returncode == 0:
+        pid = result.stdout.decode().strip()
+        print(f"✓ Daemon running (PID: {pid})")
+    else:
+        print("✗ Daemon not running")
+
+
+def daemon_restart():
+    """Restart daemon."""
+    print("Restarting daemon...")
+
+    # Kill existing
+    subprocess.run(["pkill", "-f", "claude-mattermost.*daemon"])
+
+    # Start new
+    daemon_script = INSTALL_DIR / "daemon.py"
+    subprocess.Popen(
+        [sys.executable, str(daemon_script)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True
+    )
+
+    print("Daemon restarted")
+
+
+def main():
+    """Main CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description='Claude-Mattermost CLI',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Commands
+    subparsers.add_parser('init', help='Initialize project')
+    subparsers.add_parser('sessions', help='List active sessions')
+
+    end_parser = subparsers.add_parser('end', help='End a session')
+    end_parser.add_argument('session_id', help='Session ID to end')
+
+    subparsers.add_parser('test', help='Test Mattermost connection')
+    subparsers.add_parser('logs', help='Show daemon logs')
+    subparsers.add_parser('cleanup', help='Clean up old sessions')
+    subparsers.add_parser('status', help='Check daemon status')
+    subparsers.add_parser('restart', help='Restart daemon')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    # Execute command
+    commands = {
+        'init': init_project,
+        'sessions': list_sessions,
+        'end': lambda: end_session(args.session_id),
+        'test': test_connection,
+        'logs': show_logs,
+        'cleanup': cleanup_old,
+        'status': daemon_status,
+        'restart': daemon_restart
+    }
+
+    command_func = commands.get(args.command)
+    if command_func:
+        command_func()
+    else:
+        print(f"Unknown command: {args.command}")
+
+
+if __name__ == '__main__':
+    main()
