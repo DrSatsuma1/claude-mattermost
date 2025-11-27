@@ -2,35 +2,38 @@
 
 import os
 import logging
+import requests
 from typing import Optional, Dict, Any
-from mattermostdriver import Driver
-from mattermostdriver.exceptions import ResourceNotFound
 
 logger = logging.getLogger(__name__)
 
 
 class MattermostClient:
-    """Wrapper for Mattermost API operations."""
+    """Wrapper for Mattermost API operations using REST API."""
 
     def __init__(self, url: str, token: str, scheme: str = "https", port: int = 443):
         """Initialize Mattermost client.
 
         Args:
-            url: Mattermost server URL (without scheme)
+            url: Mattermost server URL (can include scheme)
             token: Bot access token
-            scheme: URL scheme (http or https)
-            port: Server port
+            scheme: URL scheme (http or https) - ignored if URL has scheme
+            port: Server port - ignored if URL has scheme
         """
-        # Remove scheme if present in URL
-        url = url.replace("https://", "").replace("http://", "")
+        # Parse URL
+        if url.startswith('http://') or url.startswith('https://'):
+            self.base_url = url.rstrip('/')
+        else:
+            self.base_url = f"{scheme}://{url}"
+            if (scheme == 'https' and port != 443) or (scheme == 'http' and port != 80):
+                self.base_url += f":{port}"
 
-        self.driver = Driver({
-            'url': url,
-            'token': token,
-            'scheme': scheme,
-            'port': port,
-            'verify': True
-        })
+        self.api_url = f"{self.base_url}/api/v4"
+        self.token = token
+        self.headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
 
         self.team_id: Optional[str] = None
         self.channel_id: Optional[str] = None
@@ -43,8 +46,12 @@ class MattermostClient:
             True if login successful
         """
         try:
-            self.driver.login()
-            user = self.driver.users.get_user('me')
+            response = requests.get(
+                f"{self.api_url}/users/me",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            user = response.json()
             self.bot_user_id = user['id']
             logger.info(f"Logged in as {user['username']} (ID: {self.bot_user_id})")
             return True
@@ -62,12 +69,23 @@ class MattermostClient:
             True if team found
         """
         try:
-            team = self.driver.teams.get_team_by_name(team_name)
+            response = requests.get(
+                f"{self.api_url}/teams/name/{team_name}",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            team = response.json()
             self.team_id = team['id']
             logger.info(f"Using team: {team_name} (ID: {self.team_id})")
             return True
-        except ResourceNotFound:
-            logger.error(f"Team not found: {team_name}")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.error(f"Team not found: {team_name}")
+            else:
+                logger.error(f"Failed to get team: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to get team: {e}")
             return False
 
     def set_channel(self, channel_name: str) -> bool:
@@ -84,15 +102,23 @@ class MattermostClient:
             return False
 
         try:
-            channel = self.driver.channels.get_channel_by_name(
-                self.team_id,
-                channel_name
+            response = requests.get(
+                f"{self.api_url}/teams/{self.team_id}/channels/name/{channel_name}",
+                headers=self.headers
             )
+            response.raise_for_status()
+            channel = response.json()
             self.channel_id = channel['id']
             logger.info(f"Using channel: {channel_name} (ID: {self.channel_id})")
             return True
-        except ResourceNotFound:
-            logger.error(f"Channel not found: {channel_name}")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.error(f"Channel not found: {channel_name}")
+            else:
+                logger.error(f"Failed to get channel: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to get channel: {e}")
             return False
 
     def create_thread(self, message: str) -> Optional[str]:
@@ -109,10 +135,16 @@ class MattermostClient:
             return None
 
         try:
-            post = self.driver.posts.create_post({
-                'channel_id': self.channel_id,
-                'message': message
-            })
+            response = requests.post(
+                f"{self.api_url}/posts",
+                headers=self.headers,
+                json={
+                    'channel_id': self.channel_id,
+                    'message': message
+                }
+            )
+            response.raise_for_status()
+            post = response.json()
             logger.info(f"Created thread: {post['id']}")
             return post['id']
         except Exception as e:
@@ -134,11 +166,16 @@ class MattermostClient:
             return False
 
         try:
-            self.driver.posts.create_post({
-                'channel_id': self.channel_id,
-                'message': message,
-                'root_id': thread_id
-            })
+            response = requests.post(
+                f"{self.api_url}/posts",
+                headers=self.headers,
+                json={
+                    'channel_id': self.channel_id,
+                    'message': message,
+                    'root_id': thread_id
+                }
+            )
+            response.raise_for_status()
             return True
         except Exception as e:
             logger.error(f"Failed to post to thread: {e}")
@@ -154,8 +191,13 @@ class MattermostClient:
             List of posts in the thread
         """
         try:
-            response = self.driver.posts.get_thread(thread_id)
-            posts = response['posts']
+            response = requests.get(
+                f"{self.api_url}/posts/{thread_id}/thread",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            posts = data['posts']
             # Sort by create_at timestamp
             sorted_posts = sorted(
                 posts.values(),
@@ -197,7 +239,12 @@ class MattermostClient:
             True if successful
         """
         try:
-            self.driver.posts.patch_post(post_id, {'message': message})
+            response = requests.put(
+                f"{self.api_url}/posts/{post_id}/patch",
+                headers=self.headers,
+                json={'message': message}
+            )
+            response.raise_for_status()
             return True
         except Exception as e:
             logger.error(f"Failed to update post: {e}")

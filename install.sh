@@ -23,6 +23,9 @@ cp -r "$REPO_DIR/core" "$INSTALL_DIR/"
 cp -r "$REPO_DIR/hooks" "$INSTALL_DIR/"
 cp "$REPO_DIR/requirements.txt" "$INSTALL_DIR/"
 
+# Create symlink for CLI
+ln -sf "$INSTALL_DIR/core/cli.py" "$INSTALL_DIR/cli.py"
+
 # Copy .env if doesn't exist
 if [ ! -f "$INSTALL_DIR/.env" ]; then
     if [ -f "$REPO_DIR/.env" ]; then
@@ -33,9 +36,12 @@ if [ ! -f "$INSTALL_DIR/.env" ]; then
     fi
 fi
 
-# Install Python dependencies
+# Create virtual environment and install dependencies
+echo "Creating virtual environment..."
+python3 -m venv "$INSTALL_DIR/venv"
+
 echo "Installing Python dependencies..."
-pip3 install -r "$INSTALL_DIR/requirements.txt"
+"$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
 
 # Install hooks (backup existing if present)
 echo "Installing Claude Code hooks..."
@@ -80,7 +86,7 @@ fi
 # Start daemon
 echo "Starting daemon..."
 cd "$INSTALL_DIR"
-nohup python3 -m core.daemon > "$INSTALL_DIR/logs/daemon.log" 2>&1 &
+nohup "$INSTALL_DIR/venv/bin/python" -m core.daemon > "$INSTALL_DIR/logs/daemon.log" 2>&1 &
 DAEMON_PID=$!
 
 echo "  Daemon started (PID: $DAEMON_PID)"
