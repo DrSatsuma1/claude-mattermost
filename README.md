@@ -1,14 +1,33 @@
 # Claude-Mattermost Integration
 
+> ⚠️ **Status: Work in Progress** - Core infrastructure is complete but integration workflow needs finishing. See [open issues](https://github.com/DrSatsuma1/claude-mattermost/issues) for remaining work.
+
 Control Claude Code CLI sessions from your mobile device using Mattermost.
 
-## What This Does
+## What This Does (When Complete)
 
 - Start Claude Code sessions in your terminal
 - Continue conversations from Mattermost (desktop or mobile)
 - Approve tool executions remotely
 - See command outputs and responses in Mattermost threads
 - Maintain session context across devices
+
+## Current Status
+
+**✅ Working:**
+- Mattermost API client with bot token authentication
+- Daemon runs and connects to Mattermost server successfully
+- Session management database (SQLite)
+- CLI tools (test, status, restart, sessions)
+- Virtual environment setup for Python 3.13+
+
+**🚧 Not Yet Functional:**
+- HTTP API server for hook communication ([#1](https://github.com/DrSatsuma1/claude-mattermost/issues/1))
+- Automatic session/thread creation ([#2](https://github.com/DrSatsuma1/claude-mattermost/issues/2))
+- Tool approval workflow ([#3](https://github.com/DrSatsuma1/claude-mattermost/issues/3))
+- Message polling and bidirectional communication ([#4](https://github.com/DrSatsuma1/claude-mattermost/issues/4))
+
+**Completion estimate:** ~80% infrastructure done, needs integration work
 
 ## Architecture
 
